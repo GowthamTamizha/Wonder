@@ -1,0 +1,147 @@
+/**
+ * Performs a combined data extraction and VLOOKUP operation.
+ * It reads the slot keys and bet modifiers from the 'Input' sheet,
+ * uses the slot data (ID, Name, Paylines) also contained in the 'Input' sheet
+ * for the lookup, and writes the final combined data to 'Results_VLookup_Output'.
+ *
+ * * Assumes:
+ * 1. The full data source is the 'Input' sheet.
+ * 2. Lookup data (ID, Name, Paylines) is in fixed columns AU, AV, AW of 'Input'.
+ * 3. Input keys ('document__track_items__slot_id' and 'document__track_items__bet_modifier')
+ * can be anywhere in 'Input' and are found by header name.
+ */
+function simplifiedSlotVlookup() {
+  
+  // --- CONFIGURATION ---
+  // The sheet that contains ALL the data (keys, data to extract, and lookup table)
+  const INPUT_SHEET_NAME = 'Input'; 
+  // The sheet where the final 4-column result will be written
+  const RESULTS_SHEET_NAME = 'Results_VLookup_Output'; 
+  
+  // Headers to search for in the 'Input' sheet for the key data
+  const INPUT_COL_SLOT_ID = 'document__track_items__slot_id';
+  const INPUT_COL_BET_MOD = 'document__track_items__bet_modifier';
+  
+  // Index of the slotsList__id column in the INPUT_SHEET (Input!AU is column 47)
+  const LOOKUP_ID_COL_INDEX = 47; 
+  // Index of the slotsList__name column in the INPUT_SHEET (Input!AV is column 48)
+  const LOOKUP_NAME_COL_INDEX = 48;
+  // Index of the slotsList__paylines column in the INPUT_SHEET (Input!AW is column 49)
+  const LOOKUP_PAYLINES_COL_INDEX = 49;
+
+  // Output column headers (for the new Results sheet)
+  const LOOKUP_COL_NAME = 'slotsList__name';
+  const LOOKUP_COL_PAYLINES = 'slotsList__paylines';
+  // ---------------------
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  // --- Step 1: Validate Sheets ---
+  let resultsSheet = ss.getSheetByName(RESULTS_SHEET_NAME);
+  const inputSheet = ss.getSheetByName(INPUT_SHEET_NAME);
+
+  if (!inputSheet) {
+    ui.alert('Setup Error', 
+      `The required input sheet ('${INPUT_SHEET_NAME}') is missing. Please ensure it exists.`, 
+      ui.ButtonSet.OK);
+    return;
+  }
+  
+  // --- Step 2: Build the Slot Lookup Map from the 'Input' sheet (Columns AU-AW) ---
+  
+  const lastLookupRow = inputSheet.getLastRow();
+  // Read columns AU to AW from the Input sheet (Index 47 to 49)
+  // We use getRange(row, column, numRows, numCols). Column index is 1-based.
+  const lookupRange = inputSheet.getRange(1, LOOKUP_ID_COL_INDEX, lastLookupRow, 3);
+  const lookupData = lookupRange.getValues();
+  
+  const slotMap = new Map();
+
+  // Start from row 1 (skipping header)
+  for (let i = 1; i < lookupData.length; i++) {
+    const row = lookupData[i];
+    
+    // ID is at index 0 (Column AU relative to range)
+    // Name is at index 1 (Column AV relative to range)
+    // Paylines is at index 2 (Column AW relative to range)
+    const id = String(row[0]).trim(); 
+    const name = row[1];
+    const paylines = row[2];
+
+    if (id) {
+      // Store the name and paylines associated with the ID
+      slotMap.set(id, [name, paylines]);
+    }
+  }
+
+  // --- Step 3: Read and Prepare All Data from 'Input' Sheet ---
+  const inputDataRange = inputSheet.getDataRange();
+  const inputData = inputDataRange.getValues();
+  const inputHeaders = inputData[0];
+  
+  // Dynamically find the column indices for the required fields (1-based index)
+  const slotIdColIndex = inputHeaders.indexOf(INPUT_COL_SLOT_ID);
+  const betModColIndex = inputHeaders.indexOf(INPUT_COL_BET_MOD);
+
+  if (slotIdColIndex === -1 || betModColIndex === -1) {
+    ui.alert('Header Error', 
+      `Could not find required input headers in the '${INPUT_SHEET_NAME}' sheet: **${INPUT_COL_SLOT_ID}** or **${INPUT_COL_BET_MOD}**. Please check for typos.`, 
+      ui.ButtonSet.OK);
+    return;
+  }
+
+  // --- Step 4: Process the data and prepare the output array ---
+  
+  // Define the output header row in the requested order
+  const outputHeaders = [
+    INPUT_COL_SLOT_ID, 
+    LOOKUP_COL_NAME, 
+    LOOKUP_COL_PAYLINES, 
+    INPUT_COL_BET_MOD
+  ];
+  const outputData = [outputHeaders];
+
+  // Start processing from row 1 (skipping header row 0)
+  for (let i = 1; i < inputData.length; i++) {
+    const row = inputData[i];
+    // Read the ID and Bet Modifier values from the dynamic columns in the Input sheet (0-based index)
+    const slotId = String(row[slotIdColIndex]).trim();
+    const betModifier = row[betModColIndex];
+    
+    // Perform the VLOOKUP using the map
+    const result = slotMap.get(slotId);
+    
+    const slotName = result ? result[0] : '#N/A';
+    const paylines = result ? result[1] : '#N/A';
+    
+    // Assemble the new output row
+    outputData.push([
+      slotId,
+      slotName,
+      paylines,
+      betModifier
+    ]);
+  }
+
+  // --- Step 5: Write results to the designated Results sheet ---
+  if (!resultsSheet) {
+    // Create new sheet if it doesn't exist
+    resultsSheet = ss.insertSheet(RESULTS_SHEET_NAME);
+  }
+  
+  // Clear only the necessary content area before writing new data
+  if (resultsSheet.getLastRow() > 0) {
+      // Clear up to the maximum column count we are writing to ensure clean slate
+      resultsSheet.getRange(1, 1, resultsSheet.getMaxRows(), outputHeaders.length).clearContent();
+  }
+  
+  // Write all processed data in a single batch operation
+  resultsSheet
+    .getRange(1, 1, outputData.length, outputData[0].length)
+    .setValues(outputData);
+
+  ui.alert('Success! 🎉', 
+    `Combined data and VLOOKUP complete! The sheet **${RESULTS_SHEET_NAME}** has been generated with the 4 required columns.`, 
+    ui.ButtonSet.OK);
+}
