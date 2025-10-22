@@ -13,7 +13,7 @@ function simplifiedSlotVlookup() {
   // --- CONFIGURATION ---
   // The sheet that contains ALL the data (keys, data to extract, and slot lookup table)
   const INPUT_SHEET_NAME = 'Input'; 
-  // The sheet where the final 5-column result will be written
+  // The sheet where the final 6-column result will be written
   const RESULTS_SHEET_NAME = 'Results_VLookup_Output'; 
   // The sheet containing the payline-to-multiplier lookup table
   const MULTIPLIER_SHEET_NAME = 'Multiplier for HL Slots (100M)';
@@ -32,7 +32,8 @@ function simplifiedSlotVlookup() {
   // Output column headers (for the new Results sheet)
   const LOOKUP_COL_NAME = 'slotsList__name';
   const LOOKUP_COL_PAYLINES = 'slotsList__paylines';
-  const MULTIPLIER_OUTPUT_HEADER = 'Payline Multiplier (100M)'; // NEW OUTPUT COLUMN
+  const MULTIPLIER_OUTPUT_HEADER = 'Payline Multiplier (100M)';
+  const VALIDATION_OUTPUT_HEADER = 'Validation'; // NEW HEADER
   // ---------------------
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -76,7 +77,7 @@ function simplifiedSlotVlookup() {
     }
   }
 
-  // --- Step 2a: Build the Multiplier Lookup Map --- (NEW STEP)
+  // --- Step 2a: Build the Multiplier Lookup Map ---
   const lastMultiplierRow = multiplierSheet.getLastRow();
   // Read columns A and B from the Multiplier sheet
   const multiplierRange = multiplierSheet.getRange(1, 1, lastMultiplierRow, 2); 
@@ -87,7 +88,6 @@ function simplifiedSlotVlookup() {
   for (let i = 1; i < multiplierData.length; i++) {
     const row = multiplierData[i];
     // Key is in column A (index 0), Value is in column B (index 1)
-    // Payline key must be trimmed and converted to string for robust matching
     const paylineKey = String(row[0]).trim(); 
     const multiplierValue = row[1];
 
@@ -114,13 +114,14 @@ function simplifiedSlotVlookup() {
 
   // --- Step 4: Process the data and prepare the output array ---
   
-  // Define the output header row in the requested order
+  // Define the output header row in the requested order (6 columns total)
   const outputHeaders = [
     INPUT_COL_SLOT_ID, 
     LOOKUP_COL_NAME, 
     LOOKUP_COL_PAYLINES, 
     INPUT_COL_BET_MOD,
-    MULTIPLIER_OUTPUT_HEADER // NEW COLUMN
+    MULTIPLIER_OUTPUT_HEADER, 
+    VALIDATION_OUTPUT_HEADER // NEW HEADER
   ];
   const outputData = [outputHeaders];
 
@@ -129,6 +130,8 @@ function simplifiedSlotVlookup() {
     const row = inputData[i];
     
     // Read the primary key values
+    // Ensure betModifier is treated as a number for comparison later if possible, 
+    // otherwise JavaScript comparison will handle it.
     const slotId = String(row[slotIdColIndex]).trim();
     const betModifier = row[betModColIndex];
     
@@ -139,19 +142,42 @@ function simplifiedSlotVlookup() {
     const paylines = slotDetailResult ? slotDetailResult[1] : '#N/A';
     
     // --- Second VLOOKUP (Multiplier based on Paylines) ---
-    // Prepare the paylines value as a string key for the multiplier map lookup
     const paylineKey = String(paylines).trim();
     const multiplierResult = multiplierMap.get(paylineKey);
     
     const multiplierValue = multiplierResult !== undefined ? multiplierResult : '#N/A';
 
-    // Assemble the new output row
+    // --- Third Step: Validation (D2 == E2 equivalent) --- (NEW LOGIC)
+    let validationResult;
+    
+    // Check if both values are valid before comparing
+    if (betModifier === '#N/A' || multiplierValue === '#N/A') {
+      validationResult = false; // Cannot validate if lookups failed
+    } else {
+      // Comparison: D2 (betModifier) == E2 (multiplierValue)
+      // Use loose equality (==) for robust comparison between spreadsheet numbers/strings
+      // or stricter check after ensuring they are numbers:
+      const betModNumber = parseFloat(betModifier);
+      const multiplierNumber = parseFloat(multiplierValue);
+      
+      // Perform strict comparison on parsed floating-point numbers, 
+      // allowing for small precision errors (e.g., to 3 decimal places)
+      if (!isNaN(betModNumber) && !isNaN(multiplierNumber)) {
+        validationResult = Math.abs(betModNumber - multiplierNumber) < 0.001;
+      } else {
+        // Fallback to strict string comparison if parsing fails (e.g., if values are empty or non-numeric)
+        validationResult = betModifier === multiplierValue;
+      }
+    }
+
+    // Assemble the new output row (6 columns)
     outputData.push([
       slotId,
       slotName,
       paylines,
       betModifier,
-      multiplierValue // NEW VALUE
+      multiplierValue, 
+      validationResult // NEW VALUE
     ]);
   }
 
@@ -171,6 +197,6 @@ function simplifiedSlotVlookup() {
     .setValues(outputData);
 
   ui.alert('Success! 🎉', 
-    `The 5-column final report, including the Payline Multiplier, has been written to **${RESULTS_SHEET_NAME}**.`, 
+    `The 6-column final report, including the Validation column, has been written to **${RESULTS_SHEET_NAME}**.`, 
     ui.ButtonSet.OK);
 }
